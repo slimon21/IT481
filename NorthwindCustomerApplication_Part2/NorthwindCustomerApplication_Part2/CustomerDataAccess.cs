@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Data.SqlClient;
+using System.Globalization;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace NorthwindCustomerApp
 {
@@ -8,76 +12,145 @@ namespace NorthwindCustomerApp
     {
         private readonly string _connectionString;
 
-        public CustomerDataAccess(string server, string database, string username, string password)
+        public CustomerDataAccess(string server, string database, string? username = null, string? password = null, bool trustServerCertificate = false)
         {
-            _connectionString = $"Server={server};Database={database};User Id={username};Password={password};";
+            var csb = new SqlConnectionStringBuilder
+            {
+                DataSource = server,
+                InitialCatalog = database,
+                ApplicationName = "NorthwindCustomerApp",
+                Encrypt = true,
+                TrustServerCertificate = trustServerCertificate,
+                PersistSecurityInfo = false,
+                MultipleActiveResultSets = false,
+                ConnectTimeout = 15
+            };
+
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                csb.IntegratedSecurity = true;
+            }
+            else
+            {
+                csb.IntegratedSecurity = false;
+                csb.UserID = username;
+                csb.Password = password ?? string.Empty;
+            }
+
+            _connectionString = csb.ConnectionString;
         }
 
-        public int GetCustomerCount()
+        private static SqlCommand CreateTextCommand(SqlConnection conn, string sql)
         {
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT COUNT(*) FROM Customers", conn);
-            return (int)cmd.ExecuteScalar();
+            var cmd = conn.CreateCommand();
+            cmd.CommandType = CommandType.Text;
+            cmd.CommandText = sql;
+            cmd.CommandTimeout = 15;
+            return cmd;
         }
 
-        public List<string> GetCustomerLastNames()
+        public async Task<int> GetCustomerCountAsync(CancellationToken ct = default)
+        {
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT COUNT(*) FROM dbo.Customers;");
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return Convert.ToInt32(result, CultureInfo.InvariantCulture);
+        }
+
+        public async Task<List<string>> GetCustomerLastNamesAsync(CancellationToken ct = default)
         {
             var lastNames = new List<string>();
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT ContactName FROM Customers", conn);
-            var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT ContactName FROM dbo.Customers;");
+            await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
+
+            while (await reader.ReadAsync(ct))
             {
-                var name = reader["ContactName"].ToString();
-                lastNames.Add(name?.Split(' ')[^1] ?? name);
+                var contact = reader["ContactName"] as string;
+                if (!string.IsNullOrWhiteSpace(contact))
+                {
+                    var parts = contact.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    lastNames.Add(parts.Length > 0 ? parts[^1] : contact);
+                }
             }
             return lastNames;
         }
 
-        public int GetEmployeeCount()
+        public async Task<int> GetEmployeeCountAsync(CancellationToken ct = default)
         {
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT COUNT(*) FROM Employees", conn);
-            return (int)cmd.ExecuteScalar();
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT COUNT(*) FROM dbo.Employees;");
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return Convert.ToInt32(result, CultureInfo.InvariantCulture);
         }
 
-        public List<string> GetEmployeeNames()
+        public async Task<List<string>> GetEmployeeNamesAsync(CancellationToken ct = default)
         {
             var names = new List<string>();
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT LastName FROM Employees", conn);
-            var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT LastName FROM dbo.Employees;");
+            await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
+
+            while (await reader.ReadAsync(ct))
             {
-                names.Add(reader["LastName"].ToString());
+                var last = reader["LastName"] as string;
+                if (!string.IsNullOrWhiteSpace(last))
+                {
+                    names.Add(last);
+                }
             }
             return names;
         }
 
-        public int GetOrderCount()
+        public async Task<int> GetOrderCountAsync(CancellationToken ct = default)
         {
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT COUNT(*) FROM Orders", conn);
-            return (int)cmd.ExecuteScalar();
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT COUNT(*) FROM dbo.Orders;");
+            var result = await cmd.ExecuteScalarAsync(ct);
+            return Convert.ToInt32(result, CultureInfo.InvariantCulture);
         }
 
-        public List<string> GetOrderSummaries()
+        public async Task<List<string>> GetOrderSummariesAsync(CancellationToken ct = default)
         {
             var summaries = new List<string>();
-            using var conn = new SqlConnection(_connectionString);
-            conn.Open();
-            var cmd = new SqlCommand("SELECT OrderID, OrderDate FROM Orders", conn);
-            var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn, "SELECT OrderID, OrderDate FROM dbo.Orders;");
+            await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
+
+            while (await reader.ReadAsync(ct))
             {
-                summaries.Add($"Order #{reader["OrderID"]} on {reader["OrderDate"]:d}");
+                var orderId = reader["OrderID"];
+                var orderDate = reader["OrderDate"] is DateTime dt ? dt.ToString("d", CultureInfo.CurrentCulture) : reader["OrderDate"]?.ToString();
+                summaries.Add($"Order #{orderId} on {orderDate}");
             }
             return summaries;
+        }
+
+        // parameters
+        public async Task<List<string>> GetOrdersByYearAsync(int year, CancellationToken ct = default)
+        {
+            var results = new List<string>();
+            await using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+            await using var cmd = CreateTextCommand(conn,
+                "SELECT OrderID, OrderDate FROM dbo.Orders WHERE YEAR(OrderDate) = @Year;");
+
+            cmd.Parameters.Add("@Year", SqlDbType.Int).Value = year;
+
+            await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var id = reader["OrderID"];
+                var dt = reader["OrderDate"] is DateTime d ? d.ToString("d", CultureInfo.CurrentCulture) : reader["OrderDate"]?.ToString();
+                results.Add($"Order #{id} on {dt}");
+            }
+            return results;
         }
     }
 }
